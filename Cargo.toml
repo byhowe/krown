@@ -1,0 +1,21 @@
+[package]
+name = "krown"
+version = "0.1.0"
+authors = ["B. Howe <37745048+byhowe@users.noreply.github.com>"]
+edition = "2018"
+
+[dependencies]
+clap = "2.33.1"
+libc = "0.2.73"
+log = "0.4"
+pretty_env_logger = "0.4.0"
+num-integer = "0.1"
+x11 = { version = "2.18.2", features = ["xlib", "xinerama"] }
+
+[lib]
+name = "krown"
+path = "src/lib.rs"
+
+[[bin]]
+name = "krown"
+path = "app/main.rs"
