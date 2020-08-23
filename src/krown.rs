@@ -1,90 +1,68 @@
-use crate::x::window::window::Window;
-use crate::x::x::X;
-use x11::xlib;
+use xcb_rs::x::X;
+use xcb_rs::xcb;
 
-pub struct WindowDecorations
-{
-  pub border_width: u32,
-  pub border_color: u64,
-  pub background_color: u64,
-}
-
-pub struct KrownConfig
-{
-  pub decorations: WindowDecorations,
-}
+const ROOT_EVENT_MASK: u32 = 0
+  | xcb::event_mask_t::SUBSTRUCTURE_NOTIFY as u32
+  | xcb::event_mask_t::SUBSTRUCTURE_REDIRECT as u32;
 
 pub(crate) struct Krown
 {
-  pub(crate) x: X,
+  x: X,
+  screen: xcb::screen_t,
 }
 
 impl Krown
 {
-  pub(crate) fn new(config: KrownConfig) -> Self
+  pub(crate) fn new() -> Self
   {
-    log::info!("connecting to the X server.");
-    let x = X::connect("").unwrap_or_else(|| {
-      log::error!("can't connect to the X server!");
+    let x = X::connect("").unwrap_or_else(|err| {
+      log::error!("cannot connect to the X server: {}", err);
       std::process::exit(1);
     });
+    log::info!("connected to the X server.");
 
-    Self { x }
+    let screen: xcb::screen_t = x
+      .get_setup()
+      .roots()
+      .nth(x.default_screen as usize)
+      .unwrap_or_else(|| {
+        log::error!("cannot acquire the default screen.");
+        std::process::exit(1);
+      });
+
+    Self { x, screen }
   }
 
   pub(crate) fn run(&self) -> bool
   {
-    self.install_error_handlers();
-    self.initialize_wm();
-    self.x.grab(|| self.scan());
+    self.setup();
 
     true
   }
 
-  fn initialize_wm(&self)
+  fn setup(&self)
   {
-    self
-      .x
-      .get_default_root()
-      .select_input(xlib::SubstructureRedirectMask | xlib::SubstructureNotifyMask);
-    self.x.sync(false);
+    self.register_events();
   }
 
-  fn scan(&self)
+  fn register_events(&self)
   {
-    log::info!("scanning for windows.");
-    if let Some(wins) = self.x.get_default_root().query_tree().map(|wins| {
-      wins
-        .into_iter()
-        .filter_map(|w| {
-          w.get_attributes()
-            .filter(|wa| wa.override_redirect == 0 && wa.map_state == xlib::IsViewable)
-            .map(|wa| (w, wa))
-        })
-        .collect::<Vec<(Window, xlib::XWindowAttributes)>>()
-    }) {
-      log::debug!("{} viewable window(s) detected.", wins.len());
-      log::debug!("iterating non-transient windows.");
-      for (w, wa) in &wins {
-        if w.get_transient_for_hint().is_none() {
-          self.manage(&w, &wa);
-        }
-      }
-
-      log::debug!("iterating transient windows.");
-      for (w, wa) in &wins {
-        if w.get_transient_for_hint().is_some() {
-          self.manage(&w, &wa);
-        }
-      }
+    let e: *mut xcb::generic_error_t = unsafe {
+      xcb::request_check(
+        self.x.c,
+        xcb::change_window_attributes_checked(
+          self.x.c,
+          self.screen.root,
+          xcb::cw_t::EVENT_MASK as u32,
+          [ROOT_EVENT_MASK].as_ptr() as *const std::ffi::c_void,
+        ),
+      )
+    };
+    self.x.flush();
+    if !e.is_null() {
+      unsafe { libc::free(e as *mut std::ffi::c_void) };
+      log::error!("another window manager is running.");
+      std::process::exit(1);
     }
-  }
-
-  fn manage(&self, w: &Window, wa: &xlib::XWindowAttributes)
-  {
-    log::debug!(
-      "managing a window with title: {}",
-      w.get_name().unwrap_or(String::from("None"))
-    );
   }
 }

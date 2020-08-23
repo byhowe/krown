@@ -1,13 +1,7 @@
-mod client;
 mod console;
-mod error_handler;
 mod krown;
-mod x;
 
-pub use krown::KrownConfig;
-pub use krown::WindowDecorations;
-
-pub fn launch(config: KrownConfig)
+pub fn launch()
 {
   let status = console::Console::new().perform_actions();
 
@@ -16,6 +10,6 @@ pub fn launch(config: KrownConfig)
   }
 
   if status.start {
-    std::process::exit(!krown::Krown::new(config).run() as i32);
+    std::process::exit(!krown::Krown::new().run() as i32);
   }
 }

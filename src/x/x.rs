@@ -1,67 +1,72 @@
-use crate::x::atom::atom::Atoms;
-use crate::x::window::window::Window;
-use x11::xinerama;
-use x11::xlib;
+use super::ConnectionError;
+use super::Setup;
+use ::xcb::ffi::base as xcb;
+use ::xcb::ffi::xproto;
+use std::ffi::CString;
 
+/// Represents a connection to the X server.
+///
+/// Uses the XCB library to communicate with the X server.
+///
+/// Connection is automatically disconnected when it is dropped.
 pub struct X
 {
-  pub dpy: *mut xlib::Display,
-  pub atoms: Atoms,
+  c: *mut xcb::xcb_connection_t,
 }
 
 impl X
 {
-  pub fn connect(display_name: &str) -> Option<Self>
+  /// Attempts to connect to the X server running on the display specified by
+  /// the `display_name` variable. If the `display_name` is empty, then the
+  /// `DISPLAY` environment variable is used to connect.
+  pub fn connect(display_name: &str) -> Result<Self, ConnectionError>
   {
     let display_name: *const i8 = if display_name.is_empty() {
       std::ptr::null()
     } else {
-      std::ffi::CString::new(display_name)
-        .map(|v| v.as_ptr())
-        .unwrap_or(std::ptr::null())
+      CString::new(display_name).map(|v| v.as_ptr()).unwrap()
     };
-    let dpy: *mut xlib::Display = unsafe { xlib::XOpenDisplay(display_name) };
-
-    if dpy.is_null() {
-      None
-    } else {
-      Some(Self {
-        dpy,
-        atoms: Atoms::new(dpy),
-      })
-    }
+    let c: *mut xcb::xcb_connection_t =
+      unsafe { xcb::xcb_connect(display_name, std::ptr::null_mut()) };
+    ConnectionError::has_error(c)
+      .map(|err| Err(err))
+      .unwrap_or(Ok(Self { c }))
   }
 
-  pub fn get_default_root(&self) -> Window
+  pub fn get_setup(&self) -> Setup
   {
-    Window::new(self, unsafe { xlib::XDefaultRootWindow(self.dpy) })
+    Setup::from(unsafe { xcb::xcb_get_setup(self.c) })
   }
 
-  pub fn xinerama_is_active(&self) -> bool
+  #[inline(always)]
+  pub fn has_error(&self) -> Option<ConnectionError>
   {
-    (unsafe { xinerama::XineramaIsActive(self.dpy) } != 0)
+    ConnectionError::has_error(self.c)
   }
 
-  pub fn sync(&self, discard: bool)
+  /// Forces any buffered output to be written to the server. Blocks until the
+  /// write is complete.
+  ///
+  /// Returns `true` on success, `false` otherwise.
+  #[inline(always)]
+  pub fn flush(&self) -> bool
   {
-    unsafe { xlib::XSync(self.dpy, discard as i32) };
+    (unsafe { xcb::xcb_flush(self.c) } > 0)
   }
+}
 
-  pub fn grab<F>(&self, while_grabbed: F)
-  where
-    F: FnOnce(),
+impl From<*mut xcb::xcb_connection_t> for X
+{
+  fn from(c: *mut xcb::xcb_connection_t) -> Self
   {
-    log::debug!("grabbing the server.");
-    unsafe { xlib::XGrabServer(self.dpy) };
-    while_grabbed();
-    log::debug!("ungrabbing the server.");
-    unsafe { xlib::XUngrabServer(self.dpy) };
+    Self { c }
   }
+}
 
-  pub fn set_error_handler(
-    handler: extern "C" fn(_: *mut xlib::Display, _: *mut xlib::XErrorEvent) -> i32,
-  )
+impl Drop for X
+{
+  fn drop(&mut self)
   {
-    unsafe { xlib::XSetErrorHandler(Some(handler)) };
+    unsafe { xcb::xcb_disconnect(self.c) };
   }
 }
